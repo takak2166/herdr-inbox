@@ -1,0 +1,107 @@
+{
+  "id": "root",
+  "type": "row",
+  "ui_font": "PlemolJP Console",
+  "background": "canvas",
+  "divider": { "width": 1, "color": "border" },
+  "preview": "layouts/inbox.svg",
+  "children": [
+    {
+      "id": "inbox-main",
+      "type": "column",
+      "children": [
+        {
+          "id": "inbox-bar",
+          "type": "block",
+          "size": { "px": 48 },
+          "background": "chrome",
+          "content": { "mod": "inbox", "props": { "role": "bar" } }
+        },
+        {
+          "id": "inbox-boards",
+          "type": "row",
+          "gap": 10,
+          "padding": 12,
+          "children": [
+            {
+              "id": "inbox-gmail",
+              "type": "block",
+              "min": 220,
+              "background": "surface",
+              "radius": 12,
+              "border": { "width": 1, "color": "border" },
+              "content": { "mod": "inbox", "props": { "role": "gmail" } }
+            },
+            {
+              "id": "inbox-x",
+              "type": "block",
+              "min": 220,
+              "background": "surface",
+              "radius": 12,
+              "border": { "width": 1, "color": "border" },
+              "content": { "mod": "inbox", "props": { "role": "x" } }
+            },
+            {
+              "id": "inbox-calendar",
+              "type": "block",
+              "min": 220,
+              "background": "surface",
+              "radius": 12,
+              "border": { "width": 1, "color": "border" },
+              "content": { "mod": "inbox", "props": { "role": "calendar" } }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "inbox-agent",
+      "type": "column",
+      "size": { "px": 480 },
+      "min": 320,
+      "max": 900,
+      "background": "canvas",
+      "children": [
+        {
+          "id": "inbox-agent-head",
+          "type": "block",
+          "size": { "px": 44 },
+          "background": "canvas",
+          "content": { "mod": "inbox", "props": { "role": "agent-head" } }
+        },
+        {
+          "id": "inbox-right",
+          "type": "stack",
+          "active": "inbox-agent-tab",
+          "padding": 12,
+          "children": [
+            {
+              "id": "inbox-reader",
+              "type": "block",
+              "background": "surface",
+              "radius": 12,
+              "border": { "width": 1, "color": "border" },
+              "content": { "mod": "inbox", "props": { "role": "reader" } }
+            },
+            {
+              "id": "inbox-agent-tab",
+              "type": "block",
+              "background": "canvas",
+              "content": {
+                "tab": "active",
+                "pane": {
+                  "gap": 0,
+                  "radius": 12,
+                  "background": "surface",
+                  "border": { "width": 1, "color": "border" },
+                  "focus": { "width": 1, "color": "accent" },
+                  "lone": true
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

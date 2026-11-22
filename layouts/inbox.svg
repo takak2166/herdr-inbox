@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="960" height="540" fill="#14161a"/>
+  <rect x="0" y="0" width="640" height="48" fill="#1c1f24"/>
+  <text x="20" y="30" fill="#f2f4f7" font-family="sans-serif" font-size="15" font-weight="600">受信</text>
+  <rect x="560" y="12" width="64" height="24" rx="8" fill="#2a2e34"/>
+  <rect x="16" y="64" width="196" height="460" rx="12" fill="#22262c" stroke="#343841"/>
+  <rect x="220" y="64" width="196" height="460" rx="12" fill="#22262c" stroke="#343841"/>
+  <rect x="424" y="64" width="196" height="460" rx="12" fill="#22262c" stroke="#343841"/>
+  <rect x="28" y="76" width="22" height="22" rx="6" fill="#2c3138"/>
+  <rect x="232" y="76" width="22" height="22" rx="6" fill="#2c3138"/>
+  <rect x="436" y="76" width="22" height="22" rx="6" fill="#2c3138"/>
+  <text x="58" y="92" fill="#f2f4f7" font-family="sans-serif" font-size="13">メール</text>
+  <text x="262" y="92" fill="#f2f4f7" font-family="sans-serif" font-size="13">X の DM</text>
+  <text x="466" y="92" fill="#f2f4f7" font-family="sans-serif" font-size="13">予定</text>
+  <rect x="652" y="16" width="292" height="28" fill="#14161a"/>
+  <text x="668" y="34" fill="#9aa3af" font-family="sans-serif" font-size="12">相談先</text>
+  <rect x="664" y="56" width="268" height="468" rx="12" fill="#1b1e23" stroke="#343841"/>
+</svg>
