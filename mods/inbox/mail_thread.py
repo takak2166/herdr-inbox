@@ -1,6 +1,7 @@
 # 選択したメールのスレッドを、返信案用の引用として出す。本文以外は出力しない。
 
 import base64
+import html
 import json
 import re
 import subprocess
@@ -9,7 +10,6 @@ from pathlib import Path
 
 HOME = Path.home()
 MAX_MESSAGES = 8
-MAX_CHARS = 1200
 
 
 def fail(message):
@@ -54,10 +54,15 @@ def decode_data(data):
         return ""
 
 
-def plain_text(html):
-    text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", html)
-    text = re.sub(r"(?s)<[^>]+>", " ", text)
-    return " ".join(text.split())
+def plain_text(source):
+    text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", source)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</(p|div|tr|li|h[1-6]|blockquote|table)>", "\n", text)
+    text = re.sub(r"(?s)<[^>]+>", "", text)
+    text = html.unescape(text).replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def collect(part, plain, html):
@@ -79,7 +84,7 @@ def message_text(message):
     text = "\n".join(plain) if plain else "\n".join(item for item in html if item)
     if not text:
         text = str(message.get("snippet") or "").strip()
-    return text[:MAX_CHARS]
+    return text
 
 
 def main():

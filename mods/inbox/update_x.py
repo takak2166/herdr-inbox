@@ -4,6 +4,7 @@
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -69,14 +70,14 @@ def conversations(token):
             "is_archived": "false",
             "chat_conversation.fields": "type,unread,group_name",
             "expansions": "participant_ids",
-            "user.fields": "name,username",
+            "user.fields": "name,username,profile_image_url",
         }
         if page:
             query["pagination_token"] = page
         body = api_get(token, "/chat/conversations", query)
         for user in (body.get("includes") or {}).get("users") or []:
             if user.get("id"):
-                users[user["id"]] = user
+                users[str(user["id"])] = user
         rows.extend(body.get("data") or [])
         meta = body.get("meta") or {}
         page = meta.get("next_token") if meta.get("has_more") else None
@@ -108,13 +109,88 @@ def events(token, conversation_id, limit=MAX_EVENTS):
     return rows, meta.get("conversation_key_events") or []
 
 
+def api_get_optional(token, path, query=None):
+    url = f"{API}{path}"
+    if query:
+        url = f"{url}?{urllib.parse.urlencode(query, doseq=True)}"
+    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except (urllib.error.HTTPError, OSError, json.JSONDecodeError):
+        return None
+
+
+def fill_profiles(token, users, user_ids):
+    missing = [str(user_id) for user_id in dict.fromkeys(user_ids) if str(user_id).isdigit() and not (users.get(str(user_id)) or {}).get("profile_image_url")]
+    for start in range(0, len(missing), 100):
+        body = api_get_optional(token, "/users", {
+            "ids": ",".join(missing[start:start + 100]),
+            "user.fields": "name,username,profile_image_url",
+        })
+        if not body:
+            return
+        for user in body.get("data") or []:
+            user_id = str(user.get("id") or "")
+            if user_id:
+                users[user_id] = {**(users.get(user_id) or {}), **user}
+
+
+def partner_id(conversation, me):
+    if conversation.get("type") == "group":
+        return ""
+    others = [str(user_id) for user_id in conversation.get("participant_ids") or [] if str(user_id) != me]
+    return others[0] if others else me
+
+
+def circle_png(src, dest):
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+             "-vf", "format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='lte(hypot(X-W/2,Y-H/2),min(W,H)/2)*255'",
+             "-frames:v", "1", str(dest)],
+            capture_output=True, timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and dest.is_file() and dest.stat().st_size > 32
+
+
+def save_avatar(user):
+    user_id = str((user or {}).get("id") or "")
+    url = str((user or {}).get("profile_image_url") or "")
+    if not user_id.isdigit() or not url.startswith("https://pbs.twimg.com/profile_images/"):
+        return ""
+    url = re.sub(r"_normal(\.[A-Za-z0-9]+)$", r"_200x200\1", url)
+    folder = OUT_PATH.parent / "avatars"
+    raw = folder / f"{user_id}.src"
+    dest = folder / f"{user_id}.png"
+    try:
+        request = urllib.request.Request(url)
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = response.read(2_000_000)
+        if len(data) < 32:
+            return ""
+        folder.mkdir(parents=True, exist_ok=True)
+        raw.write_bytes(data)
+        if not circle_png(raw, dest):
+            return ""
+        os.chmod(dest, 0o600)
+    except (urllib.error.HTTPError, OSError):
+        if not dest.is_file():
+            return ""
+    finally:
+        raw.unlink(missing_ok=True)
+    return f"data/inbox/avatars/{dest.name}"
+
+
 def title_for(conversation, users, me):
     if conversation.get("type") == "group":
         return conversation.get("group_name") or "グループ"
     others = [user_id for user_id in conversation.get("participant_ids") or [] if user_id != me]
     if not others:
         return "自分"
-    user = users.get(others[0]) or {}
+    user = users.get(str(others[0])) or {}
     return user.get("name") or user.get("username") or "DM"
 
 
@@ -244,7 +320,7 @@ def thread_main(conversation_id):
         turns.append({
             "mine": str(row.get("sender_id") or "") == me,
             "at": row.get("created_at") or "",
-            "text": text[:1200],
+            "text": text,
             "posts": posts_in(text, looked_up),
         })
     turns.reverse()
@@ -269,6 +345,7 @@ def main():
         fail("X のアカウントを確認できませんでした")
 
     rows, users = conversations(token)
+    fill_profiles(token, users, [me, *(user_id for row in rows for user_id in (row.get("participant_ids") or []))])
     bundles = []
     sender_ids = []
     for conversation in rows:
@@ -313,6 +390,7 @@ def main():
             "preview": preview,
             "at": when or "",
             "unread": bool(conversation.get("unread")),
+            "icon": save_avatar(users.get(partner_id(conversation, me))),
         })
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -323,7 +401,12 @@ def main():
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.chmod(temporary, 0o600)
     temporary.replace(OUT_PATH)
-    report({"ok": True, "n": len(conversations_out), "with_preview": sum(1 for row in conversations_out if row["preview"])})
+    report({
+        "ok": True,
+        "n": len(conversations_out),
+        "with_preview": sum(1 for row in conversations_out if row["preview"]),
+        "with_icon": sum(1 for row in conversations_out if row["icon"]),
+    })
 
 
 if __name__ == "__main__":

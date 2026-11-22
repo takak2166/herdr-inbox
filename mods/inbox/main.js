@@ -2,7 +2,7 @@
 // X の DM は data/inbox/x.json を表示する。
 // { "updatedAt": "...", "conversations": [{ "id", "title", "preview", "at", "unread" }] }
 
-import { View, div } from "gpui-kit";
+import { View, div, image } from "gpui-kit";
 import { h_flex, v_flex, Input, InputState, Scrollbar, TextView, v_virtual_list } from "gpui-base";
 import {
   agents, appHome, checking, closeOverlay, exec, focused, hc, home, knownAgents, layout, notify, openOverlay, props, readTextFile, run, setShared, settings, shared, theme, writeTextFile,
@@ -21,7 +21,19 @@ const EMPTY = {
 };
 
 const TITLES = { gmail: "メール", x: "X の DM", calendar: "予定" };
-const KICKERS = { gmail: "直近 7 日", x: "ダイレクト", calendar: "これから" };
+const MARKS = {
+  gmail: "mods/inbox/gmail.svg",
+  x: "mods/inbox/x.svg",
+  calendar: "mods/inbox/calendar.svg",
+  label: "mods/inbox/label.svg",
+};
+const HEADER = {
+  gmail: "#ea4335",
+  x: "#0f1419",
+  calendar: "#1a73e8",
+  label: "#188038",
+};
+const KICKERS = { gmail: "過去 1 ヶ月", x: "ダイレクト", calendar: "これから" };
 
 function board() {
   return shared(KEY) ?? EMPTY;
@@ -248,6 +260,7 @@ function mapChat(row) {
     preview: String(row.preview || row.text || row.snippet || ""),
     date: row.at ?? row.date ?? row.updatedAt ?? "",
     unread: Boolean(row.unread),
+    icon: /^data\/inbox\/avatars\/\d+\.(?:jpg|png|webp)$/.test(String(row.icon || "")) ? String(row.icon) : "",
   };
 }
 
@@ -407,6 +420,20 @@ function columnKey(role) {
   return labelBlockId(props()?.label || "folder").replace(/^inbox-/, "");
 }
 
+async function mapPool(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      out[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 async function loadMail(query, max) {
   const result = await gws([
     "gmail", "+triage", "--query", query, "--max", String(max), "--labels", "--format", "json",
@@ -422,7 +449,7 @@ async function loadMail(query, max) {
   } catch { /* 差出人一覧はプロフィールがなくても出せる */ }
   try {
     const rows = asList(result.stdout.trim() ? parseJson(result.stdout) : {}, ["messages"]).map(mapMail).filter((row) => row.id);
-    const items = await Promise.all(rows.map(fillFromMetadata));
+    const items = await mapPool(rows, 4, fillFromMetadata);
     return { account, ...panel(items) };
   } catch {
     return { account, ...panel([], "error", "メールの応答を解釈できませんでした") };
@@ -430,7 +457,7 @@ async function loadMail(query, max) {
 }
 
 async function loadGmail() {
-  return loadMail("in:inbox newer_than:7d", 200);
+  return loadMail("in:inbox newer_than:30d", 500);
 }
 
 async function userLabels() {
@@ -578,7 +605,7 @@ function quoteLines(items, line) {
 
 function replyPrompt(role, item, turns, account) {
   const kind = role === "x" ? "X の DM" : "メール";
-  const who = role === "x" ? item.title : item.from;
+  const who = role === "x" ? plainLetters(item.title) : item.from;
   const quoted = turns.length
     ? turns.map((turn) => `### ${turn.mine ? "自分" : "相手"} ${formatWhen(turn.at)}\n${String(turn.text || "").slice(0, 1200)}`).join("\n\n")
     : [
@@ -688,9 +715,12 @@ function bodyHtml(text) {
 }
 
 function selectableBody(id, text, size, color) {
-  return div().text_size(size).text_color(color).child(
-    TextView.html(id, `<div>${bodyHtml(text)}</div>`).selectable(true),
-  );
+  const lines = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  return v_flex().id(id).gap(2).children(lines.map((line, index) => {
+    const row = div().id(`${id}-${index}`).min_h(size + 4).text_size(size).text_color(color);
+    if (!line) return row;
+    return row.child(TextView.html(`${id}-t${index}`, `<span>${bodyHtml(line)}</span>`).selectable(true));
+  }));
 }
 
 function turnBody(turn) {
@@ -705,9 +735,40 @@ function kindColor(t, role) {
   return t.accent;
 }
 
+const MATH_ASCII = [
+  [0x1D400, 26, 65], [0x1D41A, 26, 97],
+  [0x1D434, 26, 65], [0x1D44E, 26, 97],
+  [0x1D468, 26, 65], [0x1D482, 26, 97],
+  [0x1D4D0, 26, 65], [0x1D4EA, 26, 97],
+  [0x1D56C, 26, 65], [0x1D586, 26, 97],
+  [0x1D5A0, 26, 65], [0x1D5BA, 26, 97],
+  [0x1D5D4, 26, 65], [0x1D5EE, 26, 97],
+  [0x1D608, 26, 65], [0x1D622, 26, 97],
+  [0x1D63C, 26, 65], [0x1D656, 26, 97],
+  [0x1D670, 26, 65], [0x1D68A, 26, 97],
+  [0x1D7CE, 10, 48], [0x1D7D8, 10, 48], [0x1D7E2, 10, 48], [0x1D7EC, 10, 48], [0x1D7F6, 10, 48],
+];
+
+function plainLetters(value) {
+  let out = "";
+  for (const ch of String(value ?? "")) {
+    const code = ch.codePointAt(0);
+    let next = ch;
+    for (const [start, count, base] of MATH_ASCII) {
+      if (code >= start && code < start + count) {
+        next = String.fromCodePoint(base + code - start);
+        break;
+      }
+    }
+    out += next;
+  }
+  return out;
+}
+
 function initial(value, role) {
   let text = oneLine(String(value ?? "").split("<")[0], 24);
   if (role === "gmail") text = text.replace(/^["'\[【\s]+/, "").trim();
+  if (role === "x") text = plainLetters(text);
   return [...text][0] || "·";
 }
 
@@ -1024,7 +1085,7 @@ export default class Inbox extends View {
     }
     if (!checking()) this.ensureOpen(open, cx);
     const thread = this.thread?.id === open.id ? this.thread : { status: "loading", turns: [], summary: "", summaryStatus: "loading" };
-    const who = open.role === "x" ? (open.title || "DM") : (open.from || "メール");
+    const who = open.role === "x" ? (plainLetters(open.title) || "DM") : (open.from || "メール");
     const summaryLines = String(thread.summary || (thread.summaryStatus === "error" ? "要約できませんでした" : "要約を書いています"))
       .split(/(?<=。)/).map((line) => line.trim()).filter(Boolean).slice(0, 3);
     return v_flex().id("inbox-reader-open").size_full().min_h(0).bg(t.surface)
@@ -1069,7 +1130,7 @@ export default class Inbox extends View {
         await exec("rm", ["-f", path]);
         await writeTextFile(path, JSON.stringify({
           kind: open.role === "x" ? "X の DM" : "メール",
-          who: open.role === "x" ? open.title : open.from,
+          who: open.role === "x" ? plainLetters(open.title) : open.from,
           subject: open.subject || "",
           fallback: open.snippet || open.preview || open.subject || "",
           turns,
@@ -1141,25 +1202,23 @@ export default class Inbox extends View {
   header(t, role, data, items, key) {
     const unread = items.filter((item) => item.unread).length;
     const count = data.status === "ready" ? (unread ? `${unread} 未読` : `${items.length} 件`) : "";
-    const color = role === "label" ? t.ansi2 : kindColor(t, role);
     const title = role === "label" ? String(props()?.label || "ラベル") : TITLES[role];
     const kicker = role === "label" ? "ラベル" : (KICKERS[role] || "");
-    const mark = role === "gmail" ? "M" : role === "x" ? "X" : role === "label" ? "L" : "日";
-    return h_flex().id(`inbox-${key}-head`).h(52).px(12).gap(10).flex_none().items_center()
-      .border_b(1).border_color(t.border)
-      .child(h_flex().id(`inbox-${key}-mark`).w(28).h(28).flex_none().rounded(8).items_center().justify_center().bg(t.raised)
-        .child(div().text_size(12).font_semibold().text_color(color).child(mark)))
+    const head = HEADER[role] || HEADER.label;
+    return h_flex().id(`inbox-${key}-head`).h(52).px(12).gap(10).flex_none().items_center().bg(head)
+      .child(h_flex().id(`inbox-${key}-mark`).w(28).h(28).flex_none().rounded(8).items_center().justify_center().bg("#ffffff")
+        .child(image(MARKS[role] || MARKS.label).w(18).h(18).flex_none()))
       .child(v_flex().min_w(0).flex_1().gap(1)
-        .child(div().text_size(10).text_color(t.dim).child(kicker))
-        .child(div().truncate().text_size(13).font_semibold().text_color(t.foreground).child(title)))
+        .child(div().text_size(10).text_color("#ffffffcc").child(kicker))
+        .child(div().truncate().text_size(13).font_semibold().text_color("#ffffff").child(title)))
       .when(role === "calendar", (el) => el.child(this.calendarViewToggle(t)))
       .child(pill(t, `inbox-${key}-remove`, "外す", (_event, cx) => this.removeColumn(this.columnNodeId(role), cx)))
       .when(role === "gmail" && (data.status === "setup" || data.status === "error"), (el) => el.child(
         pill(t, "inbox-gmail-connect", "接続", () => this.connectGoogle(), "primary"),
       ))
       .when(Boolean(count), (el) => el.child(
-        h_flex().id(`inbox-${key}-count`).h(22).px(8).flex_none().items_center().rounded(11).bg(unread ? t.selected : t.raised)
-          .child(div().text_size(11).font_medium().text_color(unread ? color : t.muted).child(count)),
+        h_flex().id(`inbox-${key}-count`).h(22).px(8).flex_none().items_center().rounded(11).bg(unread ? "#ffffff" : "#ffffff33")
+          .child(div().text_size(11).font_medium().text_color(unread ? head : "#ffffff").child(count)),
       ));
   }
 
@@ -1170,14 +1229,30 @@ export default class Inbox extends View {
     if (role === "calendar" && shared("inbox.calendarView") === "month") return this.calendarMonth(t, cx, items);
     if (!items.length) return this.note(t, key, [this.emptyLine(role)]);
     if (role === "calendar") return this.calendarList(t, cx, items);
-    return v_flex().id(`inbox-${key}-list`).flex_1().min_h(0).overflow_y_scrollbar().children(
-      items.map((item, index) => this.row(t, cx, role, item, index, true, key)),
-    );
+    return this.itemList(t, cx, role, items, key);
+  }
+
+  itemList(t, cx, role, items, key) {
+    const folder = role === "label" ? String(props()?.label || "") : "";
+    const mailRole = role === "label" ? "gmail" : role;
+    return v_flex().id(`inbox-${key}-list`).relative().flex_1().min_h(0)
+      .child(v_virtual_list(`inbox-${key}-rows`, items.length, 64,
+        (index) => String(items[index]?.id || index),
+        (range) => items.slice(range.start, range.end).map((item, offset) => this.row(t, cx, role, item, range.start + offset, false, key)))
+        .on_item_click((id, clickCx) => {
+          const item = items.find((row) => String(row.id || "") === String(id));
+          if (!item?.id) return;
+          this.selected = item.id;
+          if (mailRole === "gmail" || role === "x") this.openItem(mailRole, item, folder);
+          clickCx.notify();
+        })
+        .size_full())
+      .child(Scrollbar.vertical(`inbox-${key}-rows`).viewport_from_layout().absolute().inset_0());
   }
 
   emptyLine(role) {
     if (role === "calendar") return "これからの予定はありません";
-    if (role === "gmail") return "直近1週間のメールはありません";
+    if (role === "gmail") return "過去1ヶ月のメールはありません";
     if (role === "label") return "このラベルのメールはありません";
     return "直近のものはありません";
   }
@@ -1501,7 +1576,7 @@ export default class Inbox extends View {
       ? item.id && item.id === this.selected
       : Boolean(open && open.role === mailRole && String(open.folder || "") === folder && open.id === item.id);
     const color = kindColor(t, role);
-    const primary = role === "calendar" ? item.title : (role === "x" ? item.title : item.from);
+    const primary = role === "calendar" ? item.title : (role === "x" ? plainLetters(item.title) : item.from);
     const mark = mailRole === "gmail" ? senderColor(item.from || primary) : null;
     const secondary = role === "calendar" ? (item.where || formatWhen(item.end)) : (role === "x" ? item.preview : item.subject);
     const when = role === "calendar" ? dateParts(item.date) : null;
@@ -1530,11 +1605,15 @@ export default class Inbox extends View {
             div().truncate().text_size(12).text_color(t.muted).child(oneLine(secondary, 120)),
           )));
     }
+    const photo = role === "x" ? item.icon : "";
     return row
-      .child(h_flex().id(`inbox-${role}-avatar-${index}`).w(32).h(32).flex_none().rounded(16).items_center().justify_center()
+      .child(div().id(`inbox-${role}-avatar-${index}`).w(32).h(32).flex_none().rounded_full().overflow_hidden()
+        .flex().items_center().justify_center()
         .bg(mark ? mark.bg : (item.unread ? t.selected : t.raised))
         .when(Boolean(mark?.edge), (el) => el.border(1).border_color(mark.edge))
-        .child(div().text_size(13).font_semibold().text_color(mark ? mark.fg : (item.unread ? color : t.muted)).child(initial(primary, mailRole))))
+        .child(photo
+          ? image(photo).size_full()
+          : div().text_size(13).font_semibold().text_color(mark ? mark.fg : (item.unread ? color : t.muted)).child(initial(primary, mailRole))))
       .child(v_flex().flex_1().min_w(0).gap(2)
         .child(h_flex().gap(8).items_center()
           .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground)
