@@ -3,7 +3,10 @@
   "type": "row",
   "ui_font": "PlemolJP Console",
   "background": "canvas",
-  "divider": { "width": 1, "color": "border" },
+  "divider": {
+    "width": 1,
+    "color": "border"
+  },
   "preview": "layouts/inbox.svg",
   "children": [
     {
@@ -13,9 +16,16 @@
         {
           "id": "inbox-bar",
           "type": "block",
-          "size": { "px": 48 },
+          "size": {
+            "px": 48
+          },
           "background": "chrome",
-          "content": { "mod": "inbox", "props": { "role": "bar" } }
+          "content": {
+            "mod": "inbox",
+            "props": {
+              "role": "bar"
+            }
+          }
         },
         {
           "id": "inbox-boards",
@@ -29,8 +39,16 @@
               "min": 220,
               "background": "surface",
               "radius": 12,
-              "border": { "width": 1, "color": "border" },
-              "content": { "mod": "inbox", "props": { "role": "gmail" } }
+              "border": {
+                "width": 1,
+                "color": "border"
+              },
+              "content": {
+                "mod": "inbox",
+                "props": {
+                  "role": "gmail"
+                }
+              }
             },
             {
               "id": "inbox-x",
@@ -38,8 +56,16 @@
               "min": 220,
               "background": "surface",
               "radius": 12,
-              "border": { "width": 1, "color": "border" },
-              "content": { "mod": "inbox", "props": { "role": "x" } }
+              "border": {
+                "width": 1,
+                "color": "border"
+              },
+              "content": {
+                "mod": "inbox",
+                "props": {
+                  "role": "x"
+                }
+              }
             },
             {
               "id": "inbox-calendar",
@@ -47,8 +73,16 @@
               "min": 220,
               "background": "surface",
               "radius": 12,
-              "border": { "width": 1, "color": "border" },
-              "content": { "mod": "inbox", "props": { "role": "calendar" } }
+              "border": {
+                "width": 1,
+                "color": "border"
+              },
+              "content": {
+                "mod": "inbox",
+                "props": {
+                  "role": "calendar"
+                }
+              }
             }
           ]
         }
@@ -57,7 +91,9 @@
     {
       "id": "inbox-agent",
       "type": "column",
-      "size": { "px": 480 },
+      "size": {
+        "px": 480
+      },
       "min": 320,
       "max": 900,
       "background": "canvas",
@@ -65,9 +101,16 @@
         {
           "id": "inbox-agent-head",
           "type": "block",
-          "size": { "px": 44 },
+          "size": {
+            "px": 44
+          },
           "background": "canvas",
-          "content": { "mod": "inbox", "props": { "role": "agent-head" } }
+          "content": {
+            "mod": "inbox",
+            "props": {
+              "role": "agent-head"
+            }
+          }
         },
         {
           "id": "inbox-right",
@@ -80,8 +123,16 @@
               "type": "block",
               "background": "surface",
               "radius": 12,
-              "border": { "width": 1, "color": "border" },
-              "content": { "mod": "inbox", "props": { "role": "reader" } }
+              "border": {
+                "width": 1,
+                "color": "border"
+              },
+              "content": {
+                "mod": "inbox",
+                "props": {
+                  "role": "reader"
+                }
+              }
             },
             {
               "id": "inbox-agent-tab",
@@ -93,8 +144,14 @@
                   "gap": 0,
                   "radius": 12,
                   "background": "surface",
-                  "border": { "width": 1, "color": "border" },
-                  "focus": { "width": 1, "color": "accent" },
+                  "border": {
+                    "width": 1,
+                    "color": "border"
+                  },
+                  "focus": {
+                    "width": 1,
+                    "color": "accent"
+                  },
                   "lone": true
                 }
               }

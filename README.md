@@ -21,7 +21,7 @@ herdr-app do layout.switch '{"name":"inbox"}'
 
 ## 動き始めるまでに必要なもの
 
-- メールと予定: `gws` で Gmail とカレンダーに接続する
+- メールと予定: `gws` で Gmail とカレンダーに接続する。予定を作るにはカレンダーの書き込み許可も要る
 - X の DM: Cursor の X 接続と、この PC の `~/.config/CHAT_PIN`
 - 要約: `cursor-agent`
 

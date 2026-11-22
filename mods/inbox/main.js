@@ -60,7 +60,65 @@ function tokyoDate(value) {
   const parsed = Date.parse(text);
   if (Number.isNaN(parsed)) return null;
   const shifted = new Date(parsed + 9 * 60 * 60 * 1000).toISOString();
-  return { year: Number(shifted.slice(0, 4)), month: Number(shifted.slice(5, 7)) };
+  return {
+    year: Number(shifted.slice(0, 4)),
+    month: Number(shifted.slice(5, 7)),
+    day: Number(shifted.slice(8, 10)),
+  };
+}
+
+function tokyoTodayParts() {
+  return tokyoDate(new Date().toISOString());
+}
+
+function clockText(value, fallback) {
+  const match = String(value || fallback || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return "";
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return "";
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function clockMinutes(value) {
+  const [hour, minute] = String(value || "").split(":");
+  return Number(hour) * 60 + Number(minute);
+}
+
+function nextDate(date) {
+  const [year, month, day] = date.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
+}
+
+function monthKey(year, month) {
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function shownMonth() {
+  const saved = String(shared("inbox.calendarMonth") || "");
+  const match = saved.match(/^(\d{4})-(\d{2})$/);
+  if (match) return { year: Number(match[1]), month: Number(match[2]) };
+  const today = tokyoTodayParts();
+  return { year: today.year, month: today.month };
+}
+
+function monthCells(year, month, items) {
+  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  const count = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const byDay = Array.from({ length: count + 1 }, () => []);
+  for (const item of items) {
+    const date = tokyoDate(item.date);
+    if (!date || date.year !== year || date.month !== month || !date.day) continue;
+    byDay[date.day].push(item);
+  }
+  const cells = [];
+  for (let index = 0; index < firstWeekday; index += 1) cells.push(null);
+  for (let day = 1; day <= count; day += 1) cells.push({ day, events: byDay[day] });
+  while (cells.length % 7) cells.push(null);
+  const weeks = [];
+  for (let index = 0; index < cells.length; index += 7) weeks.push(cells.slice(index, index + 7));
+  return weeks;
 }
 
 function isHoliday(item) {
@@ -258,12 +316,29 @@ function findNode(tree, id) {
   return null;
 }
 
+const LABEL_CHOICES = [
+  { name: "スター付き", query: "is:starred" },
+  { name: "重要", query: "is:important" },
+  { name: "送信済み", query: "in:sent" },
+  { name: "下書き", query: "in:draft" },
+  { name: "メイン", query: "category:primary" },
+  { name: "ソーシャル", query: "category:social" },
+  { name: "プロモーション", query: "category:promotions" },
+  { name: "新着", query: "category:updates" },
+  { name: "フォーラム", query: "category:forums" },
+];
+
 function labelColumns(tree) {
   const found = [];
   const visit = (node) => {
     if (!node || typeof node !== "object") return;
     const spec = node.content?.props;
-    if (spec?.role === "label" && spec.label) found.push(String(spec.label));
+    if (spec?.role === "label" && spec.label) {
+      found.push({
+        label: String(spec.label),
+        query: String(spec.query || `label:${gmailQueryToken(spec.label)}`),
+      });
+    }
     for (const child of node.children || []) visit(child);
   };
   visit(tree);
@@ -277,16 +352,54 @@ function labelBlockId(name) {
   return `inbox-label-${slug || "folder"}-${hash.toString(36)}`;
 }
 
-function labelBlock(name) {
+function boardBlock(id, props) {
   return {
-    id: labelBlockId(name),
+    id,
     type: "block",
     min: 220,
     background: "surface",
     radius: 12,
     border: { width: 1, color: "border" },
-    content: { mod: "inbox", props: { role: "label", label: name } },
+    content: { mod: "inbox", props },
   };
+}
+
+const BUILTIN_COLUMNS = [
+  { kind: "gmail", name: "メール", id: "inbox-gmail" },
+  { kind: "x", name: "X の DM", id: "inbox-x" },
+  { kind: "calendar", name: "予定", id: "inbox-calendar" },
+];
+
+function builtinBlock(kind) {
+  const spec = BUILTIN_COLUMNS.find((item) => item.kind === kind);
+  return boardBlock(spec.id, { role: kind });
+}
+
+function labelBlock(name, query) {
+  return boardBlock(labelBlockId(name), { role: "label", label: name, query });
+}
+
+function insertBoardColumn(boards, block) {
+  if (boards.children.some((child) => child.id === block.id)) return;
+  const role = block.content?.props?.role;
+  const children = boards.children;
+  if (role === "gmail") {
+    children.unshift(block);
+    return;
+  }
+  if (role === "calendar") {
+    children.push(block);
+    return;
+  }
+  if (role === "x") {
+    const calendar = children.findIndex((child) => child.id === "inbox-calendar");
+    children.splice(calendar < 0 ? children.length : calendar, 0, block);
+    return;
+  }
+  let at = children.findIndex((child) => child.id === "inbox-gmail");
+  at = at < 0 ? 0 : at + 1;
+  while (at < children.length && children[at]?.content?.props?.role === "label") at += 1;
+  children.splice(at, 0, block);
 }
 
 function columnKey(role) {
@@ -320,20 +433,18 @@ async function loadGmail() {
   return loadMail("in:inbox newer_than:7d", 200);
 }
 
-async function loadLabel(name) {
-  return loadMail(`label:${gmailQueryToken(name)}`, 40);
-}
-
 async function userLabels() {
   const result = await gws(["gmail", "users", "labels", "list", "--params", JSON.stringify({ userId: "me" }), "--format", "json"]);
-  if (result.code !== 0) return [];
-  try {
-    return asList(parseJson(result.stdout), ["labels"])
-      .filter((row) => row?.type !== "system" && row?.name)
-      .map((row) => String(row.name));
-  } catch {
-    return [];
+  const own = [];
+  if (result.code === 0) {
+    try {
+      for (const row of asList(parseJson(result.stdout), ["labels"])) {
+        if (row?.type === "system" || !row?.name) continue;
+        own.push({ name: String(row.name), query: `label:${gmailQueryToken(row.name)}` });
+      }
+    } catch { /* 自分のラベルが読めなくても、標準のラベルは出す */ }
   }
+  return [...own, ...LABEL_CHOICES];
 }
 
 async function writeLayout(change) {
@@ -346,21 +457,25 @@ async function writeLayout(change) {
   await writeTextFile(path, `${JSON.stringify(tree, null, 2)}\n`, text);
 }
 
-async function addLabelColumn(name) {
+async function addLabelColumn(name, query) {
   await writeLayout((boards) => {
-    const id = labelBlockId(name);
-    if (boards.children.some((child) => child.id === id)) return;
-    let at = boards.children.findIndex((child) => child.id === "inbox-gmail");
-    at = at < 0 ? boards.children.length : at + 1;
-    while (at < boards.children.length && boards.children[at]?.content?.props?.role === "label") at += 1;
-    boards.children.splice(at, 0, labelBlock(name));
+    if (boards.children.some((child) => child?.content?.props?.query === query)) return;
+    insertBoardColumn(boards, labelBlock(name, query));
   });
 }
 
-async function removeLabelColumn(name) {
+async function addBuiltinColumn(kind) {
+  await writeLayout((boards) => insertBoardColumn(boards, builtinBlock(kind)));
+}
+
+async function removeBoardColumn(id) {
+  let label = "";
   await writeLayout((boards) => {
-    boards.children = boards.children.filter((child) => child?.content?.props?.label !== name);
+    const gone = boards.children.find((child) => child.id === id);
+    if (gone?.content?.props?.role === "label") label = String(gone.content.props.label || "");
+    boards.children = boards.children.filter((child) => child.id !== id);
   });
+  return label;
 }
 
 function tokyoToday() {
@@ -651,6 +766,17 @@ export default class Inbox extends View {
         cx.notify();
       });
     }
+    if (this.role === "event-new") {
+      this.titleInput = InputState.new({ placeholder: "予定の名前" });
+      this.startInput = InputState.new({ placeholder: "09:00" });
+      this.endInput = InputState.new({ placeholder: "10:00" });
+      this.startInput.set_value("09:00");
+      this.endInput.set_value("10:00");
+      this.allDay = false;
+      this.eventBusy = false;
+      this.eventError = "";
+      this.needsCalendarWrite = false;
+    }
     if (this.role === "x") {
       this.pinInput = InputState.new({ placeholder: "チャット PIN" });
       this.pinInput.set_masked(true);
@@ -672,6 +798,7 @@ export default class Inbox extends View {
     if (this.role === "reader") return this.reader(t, cx);
     if (this.role === "line") return this.placeholder(t);
     if (this.role === "labels") return this.labelPicker(t, cx);
+    if (this.role === "event-new") return this.eventNew(t, cx);
     return this.column(t, cx, this.role);
   }
 
@@ -687,12 +814,16 @@ export default class Inbox extends View {
         } catch (e) {
           xError = safeLine(e.message ?? e);
         }
-        const names = labelColumns(layout());
+        const specs = labelColumns(layout());
         const [google, x, labelRows] = await Promise.all([
           loadGoogle(),
           loadX(),
-          Promise.all(names.map(async (name) => [name, await loadLabel(name)])),
+          Promise.all(specs.map(async (spec) => [spec.label, await loadMail(spec.query, 40)])),
         ]);
+        const labels = Object.fromEntries(labelRows);
+        for (const spec of labelColumns(layout())) {
+          if (!labels[spec.label]) labels[spec.label] = await loadMail(spec.query, 40);
+        }
         if (xError && x.status !== "ready") x.error = xError;
         if (seq !== this.seq) return;
         setShared(KEY, {
@@ -702,7 +833,7 @@ export default class Inbox extends View {
           googleClient: Boolean(google.googleClient),
           gmail: google.gmail,
           calendar: google.calendar,
-          labels: Object.fromEntries(labelRows),
+          labels,
           x,
           line: { status: "placeholder", items: [] },
         });
@@ -777,6 +908,19 @@ export default class Inbox extends View {
     notify({ title: "Google", body: "開いたタブで許可を終えたら、受信の更新を押してください" });
   }
 
+  connectCalendarWrite() {
+    const bin = `${home()}/.local/bin/gws`;
+    const scopes = [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/calendar.events",
+    ].join(",");
+    const prep = 'export PATH="$HOME/google-cloud-sdk/bin:$HOME/.local/bin:$PATH"';
+    const login = `"${bin}" auth login --scopes '${scopes}'`;
+    run("tab.new", { name: "予定の作成を許可", folder: home(), argv: ["bash", "-lc", `${prep}; ${login}`], focus: true });
+    notify({ title: "Google", body: "開いたタブで許可を終えたら、もう一度日付を押してください" });
+  }
+
   bar(t, _cx) {
     const data = board();
     const when = data.loading ? "更新中" : (data.at ? formatClock(data.at) : "");
@@ -789,6 +933,13 @@ export default class Inbox extends View {
         .child(div().text_size(11).text_color(t.muted).child("LINE 仮おき")))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(when))
       .child(this.modes(t))
+      .child(pill(t, "inbox-add-column", "列", () => openOverlay({
+        mod: "inbox",
+        props: { role: "labels" },
+        kind: "dialog",
+        width: 320,
+        height: 440,
+      })))
       .child(pill(t, "inbox-refresh", "更新", (_event, cx) => this.refresh(cx)))
       .child(pill(t, "inbox-consult", "相談する", (_event, cx) => this.consult(cx), "primary"));
   }
@@ -991,9 +1142,9 @@ export default class Inbox extends View {
     const unread = items.filter((item) => item.unread).length;
     const count = data.status === "ready" ? (unread ? `${unread} 未読` : `${items.length} 件`) : "";
     const color = role === "label" ? t.ansi2 : kindColor(t, role);
-    const title = role === "label" ? String(props()?.label || "フォルダ") : TITLES[role];
-    const kicker = role === "label" ? "フォルダ" : (KICKERS[role] || "");
-    const mark = role === "gmail" ? "M" : role === "x" ? "X" : role === "label" ? "F" : "日";
+    const title = role === "label" ? String(props()?.label || "ラベル") : TITLES[role];
+    const kicker = role === "label" ? "ラベル" : (KICKERS[role] || "");
+    const mark = role === "gmail" ? "M" : role === "x" ? "X" : role === "label" ? "L" : "日";
     return h_flex().id(`inbox-${key}-head`).h(52).px(12).gap(10).flex_none().items_center()
       .border_b(1).border_color(t.border)
       .child(h_flex().id(`inbox-${key}-mark`).w(28).h(28).flex_none().rounded(8).items_center().justify_center().bg(t.raised)
@@ -1001,18 +1152,8 @@ export default class Inbox extends View {
       .child(v_flex().min_w(0).flex_1().gap(1)
         .child(div().text_size(10).text_color(t.dim).child(kicker))
         .child(div().truncate().text_size(13).font_semibold().text_color(t.foreground).child(title)))
-      .when(role === "gmail", (el) => el.child(
-        pill(t, "inbox-gmail-folder", "フォルダ", () => openOverlay({
-          mod: "inbox",
-          props: { role: "labels" },
-          kind: "popup",
-          width: 280,
-          height: 280,
-        })),
-      ))
-      .when(role === "label", (el) => el.child(
-        pill(t, `inbox-${key}-remove`, "外す", (_event, cx) => this.removeFolder(props()?.label, cx)),
-      ))
+      .when(role === "calendar", (el) => el.child(this.calendarViewToggle(t)))
+      .child(pill(t, `inbox-${key}-remove`, "外す", (_event, cx) => this.removeColumn(this.columnNodeId(role), cx)))
       .when(role === "gmail" && (data.status === "setup" || data.status === "error"), (el) => el.child(
         pill(t, "inbox-gmail-connect", "接続", () => this.connectGoogle(), "primary"),
       ))
@@ -1026,6 +1167,7 @@ export default class Inbox extends View {
     if (board().loading && !items.length && data.status !== "setup" && data.status !== "error") return this.note(t, key, ["読み込み中"]);
     if (data.status === "setup") return this.note(t, key, this.setupLines(role, data.error));
     if (data.status === "error") return this.note(t, key, [data.error || "読めませんでした"]);
+    if (role === "calendar" && shared("inbox.calendarView") === "month") return this.calendarMonth(t, cx, items);
     if (!items.length) return this.note(t, key, [this.emptyLine(role)]);
     if (role === "calendar") return this.calendarList(t, cx, items);
     return v_flex().id(`inbox-${key}-list`).flex_1().min_h(0).overflow_y_scrollbar().children(
@@ -1036,56 +1178,244 @@ export default class Inbox extends View {
   emptyLine(role) {
     if (role === "calendar") return "これからの予定はありません";
     if (role === "gmail") return "直近1週間のメールはありません";
-    if (role === "label") return "このフォルダにメールはありません";
+    if (role === "label") return "このラベルのメールはありません";
     return "直近のものはありません";
   }
 
-  labelPicker(t, cx) {
-    const added = new Set(labelColumns(layout()));
-    const choices = this.choices || [];
-    return v_flex().id("inbox-label-picker").size_full().bg(t.popover).p(12).gap(8)
-      .child(div().text_size(13).font_semibold().text_color(t.foreground).child("フォルダを列にする"))
-      .child(div().text_size(11).text_color(t.muted).child("Gmail で分けたラベルを、メールの右に足します。"))
-      .child(v_flex().flex_1().min_h(0).gap(4).overflow_y_scrollbar().children(
-        !this.choicesReady
-          ? [div().id("inbox-label-wait").text_size(12).text_color(t.muted).child("読み込み中")]
-          : choices.length
-            ? choices.map((name) => {
-              const on = added.has(name);
-              const id = labelBlockId(name);
-              return h_flex().id(id).h(32).px(10).gap(8).items_center().rounded(8)
-                .when(!on, (el) => el.cursor_pointer().hover((style) => style.bg(t.hover)).on_click((_event, clickCx) => this.addFolder(name, clickCx)))
-                .child(div().flex_1().truncate().text_size(13).text_color(on ? t.dim : t.foreground).child(name))
-                .when(on, (el) => el.child(div().text_size(11).text_color(t.dim).child("追加済み")));
-            })
-            : [div().id("inbox-label-none").text_size(12).text_color(t.muted).child("フォルダはまだありません")],
-      ));
+  columnNodeId(role) {
+    if (role === "label") return labelBlockId(props()?.label || "");
+    return BUILTIN_COLUMNS.find((item) => item.kind === role)?.id || "";
   }
 
-  addFolder(name, cx) {
-    closeOverlay(props().overlay);
+  labelPicker(t) {
+    const tree = layout();
+    const present = new Set((findNode(tree, "inbox-boards")?.children || []).map((child) => child.id));
+    const addedQueries = new Set(labelColumns(tree).map((spec) => spec.query));
+    const builtins = BUILTIN_COLUMNS.map((choice) => this.columnChoice(t, choice, present.has(choice.id)));
+    const labels = !this.choicesReady
+      ? [div().id("inbox-label-wait").h(32).px(10).text_size(12).text_color(t.muted).child("ラベルを読み込んでいます")]
+      : (this.choices || []).map((choice) => this.columnChoice(t, {
+        kind: "label",
+        name: choice.name,
+        query: choice.query,
+        id: labelBlockId(choice.name),
+      }, addedQueries.has(choice.query)));
+    return v_flex().id("inbox-label-picker").size_full().bg(t.popover).p(12).gap(8)
+      .child(div().text_size(13).font_semibold().text_color(t.foreground).child("列を追加"))
+      .child(div().text_size(11).text_color(t.muted).child("外した列を戻すか、Gmail のラベルを足します。"))
+      .child(v_flex().id("inbox-label-choices").h(340).gap(4).overflow_y_scrollbar().children([
+        ...builtins,
+        div().id("inbox-column-label-heading").h(28).px(10).text_size(11).font_medium().text_color(t.dim).child("ラベル"),
+        ...(labels.length ? labels : [div().id("inbox-label-none").h(32).px(10).text_size(12).text_color(t.muted).child("ラベルはまだありません")]),
+      ]));
+  }
+
+  columnChoice(t, choice, added) {
+    return h_flex().id(`inbox-add-${choice.id}`).h(36).px(10).gap(8).items_center().rounded(8).cursor_pointer()
+      .bg(added ? t.surface : t.raised)
+      .hover((style) => style.bg(t.hover))
+      .on_click((_event, cx) => { if (!added) this.addColumn(choice, cx); })
+      .child(div().flex_1().truncate().text_size(13).text_color(t.foreground).child(choice.name))
+      .child(div().text_size(11).font_medium().text_color(added ? t.dim : t.accent).child(added ? "追加済み" : "追加"));
+  }
+
+  addColumn(choice, cx) {
     cx.spawn(async (cx) => {
       try {
-        await addLabelColumn(name);
-        const loaded = await loadLabel(name);
-        const current = board();
-        setShared(KEY, { ...current, labels: { ...(current.labels || {}), [name]: loaded } });
+        if (choice.kind === "label") {
+          await addLabelColumn(choice.name, choice.query);
+          const loaded = await loadMail(choice.query, 40);
+          const current = board();
+          setShared(KEY, { ...current, labels: { ...(current.labels || {}), [choice.name]: loaded } });
+        } else {
+          await addBuiltinColumn(choice.kind);
+        }
+        closeOverlay(props().overlay);
       } catch (e) {
-        notify({ title: "フォルダ", body: safeLine(e.message ?? e) || "列を足せませんでした", level: "warning" });
+        notify({ title: "列", body: safeLine(e.message ?? e) || "列を足せませんでした", level: "warning" });
       }
       cx.notify();
     });
   }
 
-  removeFolder(name, cx) {
+  removeColumn(id, cx) {
     cx.spawn(async (cx) => {
       try {
-        await removeLabelColumn(name);
-        const labels = { ...(board().labels || {}) };
-        delete labels[name];
-        setShared(KEY, { ...board(), labels });
+        const label = await removeBoardColumn(id);
+        if (label) {
+          const labels = { ...(board().labels || {}) };
+          delete labels[label];
+          setShared(KEY, { ...board(), labels });
+        }
       } catch (e) {
-        notify({ title: "フォルダ", body: safeLine(e.message ?? e) || "列を外せませんでした", level: "warning" });
+        notify({ title: "列", body: safeLine(e.message ?? e) || "列を外せませんでした", level: "warning" });
+      }
+      cx.notify();
+    });
+  }
+
+  calendarViewToggle(t) {
+    const month = shared("inbox.calendarView") === "month";
+    const chip = (id, label, on, mode) => h_flex().id(id).h(22).px(8).flex_none().items_center().rounded(11).cursor_pointer()
+      .bg(on ? t.selected : t.raised)
+      .hover((style) => style.bg(on ? t.selected : t.hover))
+      .on_click((_event, cx) => {
+        setShared("inbox.calendarView", mode);
+        if (mode === "month" && !shared("inbox.calendarMonth")) {
+          const today = tokyoTodayParts();
+          setShared("inbox.calendarMonth", monthKey(today.year, today.month));
+        }
+        cx.notify();
+      })
+      .child(div().text_size(11).font_medium().text_color(on ? t.foreground : t.muted).child(label));
+    return h_flex().id("inbox-calendar-view").gap(4).flex_none()
+      .child(chip("inbox-cal-view-list", "一覧", !month, "list"))
+      .child(chip("inbox-cal-view-month", "月", month, "month"));
+  }
+
+  shiftCalendarMonth(delta, cx) {
+    const current = shownMonth();
+    const next = new Date(Date.UTC(current.year, current.month - 1 + delta, 1));
+    setShared("inbox.calendarMonth", monthKey(next.getUTCFullYear(), next.getUTCMonth() + 1));
+    cx.notify();
+  }
+
+  calendarMonth(t, cx, items) {
+    const current = shownMonth();
+    const today = tokyoTodayParts();
+    const weeks = monthCells(current.year, current.month, items);
+    const weekdayColor = (index) => index === 0 ? "#d70018" : index === 6 ? t.ansi4 : t.dim;
+    return v_flex().id("inbox-calendar-month").flex_1().min_h(0).bg(t.surface)
+      .child(h_flex().id("inbox-calendar-month-nav").h(36).px(8).gap(6).flex_none().items_center()
+        .child(pill(t, "inbox-cal-prev", "前", (_event, clickCx) => this.shiftCalendarMonth(-1, clickCx)))
+        .child(div().flex_1().text_size(13).font_semibold().text_color(t.foreground).child(`${current.year}年${current.month}月`))
+        .child(pill(t, "inbox-cal-today", "今日", (_event, clickCx) => {
+          setShared("inbox.calendarMonth", monthKey(today.year, today.month));
+          clickCx.notify();
+        }))
+        .child(pill(t, "inbox-cal-next", "次", (_event, clickCx) => this.shiftCalendarMonth(1, clickCx))))
+      .child(h_flex().id("inbox-calendar-weekdays").h(22).px(4).flex_none().children(
+        ["日", "月", "火", "水", "木", "金", "土"].map((label, index) => div()
+          .id(`inbox-cal-wd-${index}`).flex_1().min_w(0).text_size(10).text_color(weekdayColor(index))
+          .child(label)),
+      ))
+      .child(v_flex().id("inbox-calendar-weeks").flex_1().min_h(0).overflow_y_scrollbar().children(
+        weeks.map((week, weekIndex) => h_flex().id(`inbox-cal-week-${weekIndex}`).h(78).flex_none().children(
+          week.map((cell, dayIndex) => this.calendarCell(t, current, today, weekIndex, dayIndex, cell)),
+        )),
+      ));
+  }
+
+  calendarCell(t, current, today, weekIndex, dayIndex, cell) {
+    if (!cell) {
+      return v_flex().id(`inbox-cal-empty-${weekIndex}-${dayIndex}`).flex_1().min_w(0).h(78).bg(t.canvas)
+        .border_r(1).border_b(1).border_color(t.border);
+    }
+    const holiday = cell.events.some((item) => item.holiday || isHoliday(item));
+    const isToday = today.year === current.year && today.month === current.month && today.day === cell.day;
+    const numberColor = holiday ? "#1f8a4c" : dayIndex === 0 ? "#d70018" : dayIndex === 6 ? t.ansi4 : t.foreground;
+    const shown = cell.events.slice(0, 2);
+    const rest = cell.events.length - shown.length;
+    return v_flex().id(`inbox-cal-day-${current.year}-${current.month}-${cell.day}`).flex_1().min_w(0).h(78).px(2).py(2).gap(1)
+      .bg(isToday ? t.selected : t.surface)
+      .border_r(1).border_b(1).border_color(t.border)
+      .child(div().cursor_pointer().text_size(11).font_semibold().text_color(numberColor)
+        .on_click((_event, cx) => this.openNewEvent(current.year, current.month, cell.day, cx))
+        .child(String(cell.day)))
+      .children(shown.map((item, index) => div()
+        .id(`inbox-cal-ev-${cell.day}-${index}`)
+        .truncate().text_size(9).text_color(item.holiday || isHoliday(item) ? "#1f8a4c" : t.foreground)
+        .cursor_pointer()
+        .on_click((_event, cx) => {
+          this.selected = item.id;
+          cx.notify();
+        })
+        .child(oneLine(item.title, 12))))
+      .when(rest > 0, (el) => el.child(div().text_size(9).text_color(t.dim).child(`+${rest}`)));
+  }
+
+  openNewEvent(year, month, day) {
+    openOverlay({
+      mod: "inbox",
+      props: { role: "event-new", year, month, day },
+      kind: "dialog",
+      width: 360,
+      height: 300,
+    });
+  }
+
+  eventNew(t, cx) {
+    const when = props();
+    const date = `${when.year}年${when.month}月${when.day}日`;
+    return v_flex().id("inbox-event-new").size_full().bg(t.popover).p(16).gap(10)
+      .child(div().text_size(14).font_semibold().text_color(t.foreground).child("予定を作る"))
+      .child(div().text_size(12).text_color(t.muted).child(date))
+      .child(Input.new(this.titleInput).h(34).px(10).rounded(8).border_1().border_color(t.input).bg(t.background).text_size(13).text_color(t.foreground))
+      .when(!this.allDay, (el) => el.child(h_flex().gap(8)
+        .child(Input.new(this.startInput).flex_1().h(34).px(10).rounded(8).border_1().border_color(t.input).bg(t.background).text_size(13).text_color(t.foreground))
+        .child(Input.new(this.endInput).flex_1().h(34).px(10).rounded(8).border_1().border_color(t.input).bg(t.background).text_size(13).text_color(t.foreground))))
+      .child(h_flex().id("inbox-event-all-day").h(28).px(10).flex_none().items_center().rounded(8).cursor_pointer()
+        .bg(this.allDay ? t.selected : t.raised)
+        .on_click((_event, clickCx) => {
+          this.allDay = !this.allDay;
+          clickCx.notify();
+        })
+        .child(div().text_size(12).text_color(t.foreground).child(this.allDay ? "終日" : "時間を指定")))
+      .when(Boolean(this.eventError), (el) => el.child(div().whitespace_normal().text_size(12).text_color(t.blocked).child(this.eventError)))
+      .when(this.needsCalendarWrite, (el) => el.child(
+        pill(t, "inbox-event-auth", "作成を許可", () => this.connectCalendarWrite(), "primary"),
+      ))
+      .child(h_flex().gap(8)
+        .child(pill(t, "inbox-event-cancel", "やめる", () => closeOverlay(props().overlay)))
+        .child(pill(t, "inbox-event-save", this.eventBusy ? "追加しています" : "作る", (_event, clickCx) => this.saveEvent(clickCx), "primary")));
+  }
+
+  saveEvent(cx) {
+    if (this.eventBusy) return;
+    const title = String(this.titleInput?.value() || "").trim();
+    const when = props();
+    const date = `${when.year}-${String(when.month).padStart(2, "0")}-${String(when.day).padStart(2, "0")}`;
+    const start = clockText(this.startInput?.value(), "09:00");
+    const end = clockText(this.endInput?.value(), "10:00");
+    if (!title) {
+      this.eventError = "名前を入れてください";
+      this.needsCalendarWrite = false;
+      cx.notify();
+      return;
+    }
+    if (!this.allDay && (!start || !end || clockMinutes(end) <= clockMinutes(start))) {
+      this.eventError = "終わりは始まりより後にしてください";
+      this.needsCalendarWrite = false;
+      cx.notify();
+      return;
+    }
+    this.eventBusy = true;
+    this.eventError = "";
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const result = this.allDay
+          ? await gws(["calendar", "events", "insert", "--params", JSON.stringify({ calendarId: "primary" }), "--json", JSON.stringify({
+            summary: title,
+            start: { date },
+            end: { date: nextDate(date) },
+          }), "--format", "json"])
+          : await gws(["calendar", "+insert", "--summary", title, "--start", `${date}T${start}:00+09:00`, "--end", `${date}T${end}:00+09:00`, "--format", "json"]);
+        if (result.code !== 0) {
+          const message = gwsMessage(result) || "予定を作れませんでした";
+          this.needsCalendarWrite = /scope|permission|forbidden|insufficient/i.test(message);
+          this.eventError = this.needsCalendarWrite ? "予定を書く許可がまだありません" : message;
+          this.eventBusy = false;
+          cx.notify();
+          return;
+        }
+        const calendar = await loadCalendar();
+        setShared(KEY, { ...board(), calendar });
+        closeOverlay(props().overlay);
+        notify({ title: "予定", body: "追加しました" });
+      } catch (e) {
+        this.eventError = safeLine(e.message ?? e) || "予定を作れませんでした";
+        this.eventBusy = false;
       }
       cx.notify();
     });
